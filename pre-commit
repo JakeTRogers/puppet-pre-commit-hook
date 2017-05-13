@@ -1,8 +1,8 @@
 #!/bin/bash
 # pre-commit git hook to check the validity of a puppet manifest
 #
-# Prerequisites:
-#   gem install puppet-lint puppet
+# Prerequisites(r10k is only needed for control repos):
+#   gem install puppet-lint puppet r10k
 #
 # Install:
 #  /path/to/repo/.git/hooks/pre-commit
@@ -73,6 +73,7 @@ function setup_paths() {
     path_to_puppet_lint="${path_to_pdk} bundle exec puppet-lint"
     path_to_erb="${path_to_pdk} bundle exec erb"
     path_to_ruby="${path_to_pdk} bundle exec ruby"
+    path_to_r10k="${path_to_pdk} bundle exec r10k"
 
   # Second preference is for a bundler setup
   elif use_bundle; then
@@ -80,6 +81,7 @@ function setup_paths() {
     path_to_puppet_lint="${path_to_bundle} exec puppet-lint"
     path_to_erb="${path_to_bundle} exec erb"
     path_to_ruby="${path_to_bundle} exec ruby"
+    path_to_r10k="${path_to_bundle} exec r10k"
 
   # If neither the PDK or bundler are available, rely on actual binaries
   else
@@ -110,6 +112,11 @@ function setup_paths() {
       fail "Please install ruby and try again.\n"
       exit 1
     fi
+
+    # if gemfile does not mention r10k, unset the r10k path variable
+    if ! grep -q "\s*gem\s\+['\"]r10k['\"]" Gemfile 2>&1 /dev/null; then
+      unset $path_to_r10k
+    fi
   fi
 }
 
@@ -122,6 +129,23 @@ function checkyaml() {
 }
 
 setup_paths
+
+if [[ $(git diff --name-only --cached | grep 'Puppetfile$') ]]; then
+  # only require r10k if a Puppetfile was modfied
+  if ! [[ -n "$path_to_r10k" ]]; then
+    echo "The r10k binary wasn't found. Sorry, I won't allow you to commit without r10k installed."
+    fail "Please install r10k and try again.\n"
+    exit 1
+  fi
+  header "*** Checking Puppetfile syntax ***"
+  $path_to_r10k puppetfile check 2>&1 | grep -v '^Syntax'
+  if [[ "${PIPESTATUS[0]}" -ne 0 ]]; then
+    fail "FAILED: "; echo 'Puppetfile'
+    syntax_is_bad=1
+  else
+    pass "PASSED: "; echo 'Puppetfile'
+  fi
+fi
 
 if [[ $(git diff --name-only --cached | grep -E '\.(pp)') ]]; then
   header "*** Checking puppet code for style ***"
